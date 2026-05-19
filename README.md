@@ -1,11 +1,12 @@
 # Local ReAct Agent
 
-A minimal, "hand-built" ReAct agent that runs entirely on your computer using
-[Ollama](https://ollama.com) + Llama 3.2 3B. Four short Python files, no
-SDK abstractions over the loop — every Action is parsed from text and
-dispatched manually.
+A minimal, "hand-built" ReAct agent that talks to any OpenAI-compatible
+Chat Completions endpoint. Four short Python files, no SDK abstractions over
+the loop — every Action is parsed from text and dispatched manually.
 
-No API key. No paid subscription. ~3 GB disk for the model.
+Works with OpenAI, Azure/OpenAI-compatible gateways, local servers that expose
+`/v1/chat/completions`, and providers such as LM Studio or Ollama's compatible
+API mode.
 
 ## Pseudo Code
 
@@ -16,9 +17,9 @@ No API key. No paid subscription. ~3 GB disk for the model.
 - **Chat API roles** — every message is tagged `system` / `user` / `assistant`.
   Tool observations are injected as `user` messages with an `Observation:`
   prefix (the original 2022 ReAct paper convention).
-- **Stop sequences** — Ollama's `stop` parameter halts generation before the
-  model writes `Observation:`, so each assistant message contains exactly
-  one Action. A regex catches any stragglers client-side.
+- **Stop sequences** — the Chat Completions `stop` parameter halts generation
+  before the model writes `Observation:`, so each assistant message contains
+  exactly one Action. A regex catches any stragglers client-side.
 - **Prompt-as-history** — the LLM is stateless. The full `messages` list is
   re-sent every turn. That's literally the "context window" filling up.
 - **Inner vs outer loop** — the outer loop is multi-turn conversation
@@ -42,16 +43,22 @@ No API key. No paid subscription. ~3 GB disk for the model.
 ## Prereqs
 
 - Python 3.10+
-- Linux / macOS with [Homebrew](https://brew.sh) (other installers work too)
-- ~3 GB free disk (Llama 3.2 3B is ~2 GB)
+- An OpenAI-compatible chat completions endpoint
+- `OPENAI_API_KEY` for providers that require authentication
 
 ## One-time setup
 
 ```bash
-brew install ollama
-brew services start ollama          # daemon on localhost:11434
-ollama pull llama3.2:3b             # ~2 GB, one-time download
+export OPENAI_API_KEY="your-api-key"
+export OPENAI_MODEL="gpt-4o-mini"
+
+# Optional. Defaults to https://api.openai.com/v1.
+export OPENAI_BASE_URL="https://api.openai.com/v1"
 ```
+
+For a local OpenAI-compatible server, point `OPENAI_BASE_URL` at its `/v1`
+base URL and set `OPENAI_MODEL` to the local model name. If the server does
+not require auth, `OPENAI_API_KEY` can be left unset.
 
 ## Per-session setup
 
@@ -112,19 +119,22 @@ user> /clear
 
 - **Add a tool** — add one entry to `tools.TOOLS`. The system prompt picks
   it up automatically via `docs()`.
-- **Swap the model** — change `MODEL` in `llm.py`. Tiny models that work (sometimes):
-  `llama3.2:1b` (faster, less reliable format), `qwen2.5:3b`, `qwen2.5:1.5b`.
+- **Swap the model** — set `OPENAI_MODEL` before running the REPL.
+- **Swap the endpoint** — set `OPENAI_BASE_URL` to another compatible `/v1`
+  base URL.
 - **More steps** — raise `max_steps` in `agent_turn` (default 8).
 - **Less deterministic** — raise `temperature` in the `chat` call (default 0).
 
 ## Troubleshooting
 
-- `httpx.ConnectError`: Ollama isn't running. `brew services start ollama`.
-- First turn is slow (~10 s): model loading into memory. Subsequent turns
-  use the warm cache.
+- `401 Unauthorized`: `OPENAI_API_KEY` is missing or invalid for the selected
+  provider.
+- `404 Not Found`: `OPENAI_BASE_URL` is probably wrong. Use the provider's
+  `/v1` base URL, not a dashboard URL.
+- `httpx.ConnectError`: the configured endpoint is unreachable.
 - Model emits text instead of `Action: ...`: format drift. The loop catches
-  it and prints `(no action - using reply as final)`. Llama 3.2 3B is
-  reliable; smaller models drift more.
+  it and prints `(no action - using reply as final)`. Smaller models tend to
+  drift more.
 - Tool raises an exception: caught and reported as
   `Observation: Error from <tool>: <message>` so the model can react.
-- Answers are not logical: we are not using a Frontier model here.
+- Answers are not logical: try a stronger `OPENAI_MODEL`.

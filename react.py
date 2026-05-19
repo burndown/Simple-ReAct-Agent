@@ -15,12 +15,14 @@ This is the heart of the agent. Every technique that makes ReAct work is here:
 """
 
 import re
+from datetime import date
 
 from llm import chat
 from tools import dispatch, docs
 
 
 SYSTEM_PROMPT = f"""You are a ReAct agent. Answer questions by interleaving short Thoughts and Actions.
+Current date: {date.today().isoformat()}.
 
 Available actions:
 {docs()}
@@ -37,8 +39,9 @@ If an Observation starts with "Error from", treat it as feedback: analyze what w
 """
 
 
-# Matches the first `Action: name[arg]`. DOTALL lets [arg] span newlines.
-ACTION_RE = re.compile(r"Action:\s*(\w+)\s*\[(.*?)\]", re.DOTALL)
+# Matches one `Action: name[arg]`. The arg is greedy so bracketed content in
+# final answers, such as Markdown links or arXiv IDs, is not truncated.
+ACTION_RE = re.compile(r"Action:\s*(\w+)\s*\[(.*)\]\s*$", re.DOTALL)
 
 
 def parse_action(text: str) -> tuple[str, str | None, str | None]:

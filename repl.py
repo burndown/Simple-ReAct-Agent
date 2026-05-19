@@ -14,7 +14,7 @@ Operational commands (handled here, not seen by the model):
 from react import SYSTEM_PROMPT, agent_turn
 
 
-BANNER = """Local ReAct agent (Llama 3.2 3B via Ollama).
+BANNER = """ReAct agent (OpenAI-compatible chat completions).
 Type a question. Multi-turn: each follow-up sees the full prior conversation.
 Commands: 'quit' or Ctrl-D to exit, '/clear' to clear history, '/history' to dump messages."""
 
