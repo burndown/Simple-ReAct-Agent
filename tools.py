@@ -121,6 +121,19 @@ def tool_specs() -> list[dict]:
     ]
 
 
+def responses_tool_specs() -> list[dict]:
+    """OpenAI Responses API tool schemas."""
+    return [
+        {
+            "type": "function",
+            "name": name,
+            "description": meta["description"],
+            "parameters": meta["parameters"],
+        }
+        for name, meta in TOOLS.items()
+    ]
+
+
 def dispatch(name: str, arguments: str | dict) -> str:
     """Run a tool by name using JSON arguments from an OpenAI tool call."""
     if name not in TOOLS:

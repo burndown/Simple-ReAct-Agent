@@ -37,6 +37,9 @@ It also works with OpenAI-compatible gateways or local servers by overriding
 | `tools.py` | ~130 | tool schemas, `calculate`, `web_search`, `dispatch` |
 | `react.py` | ~80 | `SYSTEM_PROMPT`, tool-call loop, `agent_turn` |
 | `repl.py` | ~55 | Multi-turn REPL with `/clear`/`/history` commands |
+| `responses_llm.py` | ~70 | Optional OpenAI Responses API HTTP wrapper |
+| `responses_agent.py` | ~85 | Optional Responses API tool-call loop |
+| `responses_repl.py` | ~40 | Optional Responses API REPL |
 | `requirements.txt` | 2 | `httpx`, `ddgs` |
 
 ## Prereqs
@@ -70,6 +73,32 @@ pip install -r requirements.txt
 ```bash
 python -m repl
 ```
+
+## Responses API Variant
+
+The default `repl.py` uses Chat Completions because it works with OpenAI and
+many OpenAI-compatible providers. There is also a separate Responses API demo:
+
+```bash
+python -m responses_repl
+```
+
+Responses API differs from Chat Completions in a few important ways:
+
+- The endpoint is `/v1/responses` instead of `/v1/chat/completions`.
+- The model can return `function_call` output items instead of assistant
+  messages with `tool_calls`.
+- Tool results are sent back as input items with
+  `type: "function_call_output"` and the matching `call_id`.
+- Multi-turn state can be continued with `previous_response_id`, so the REPL
+  does not need to resend a local `messages` array for every follow-up.
+- OpenAI also exposes built-in tools through Responses API, while this demo
+  only uses local function tools for parity with the Chat Completions version.
+
+Provider support is not universal. DeepSeek's public docs describe
+OpenAI-compatible `/chat/completions` and function calling there, but not
+OpenAI's `/responses` endpoint. Use the default `python -m repl` path for
+DeepSeek unless DeepSeek adds `/responses` support.
 
 ### REPL commands
 
@@ -135,8 +164,8 @@ This project is intentionally small, but the next useful upgrades are:
 - **More practical tools** — add examples such as `fetch_url(url)`,
   `arxiv_search(query)`, `current_time()`, `read_file(path)`, or
   `write_note(title, content)`.
-- **Responses API variant** — add a second LLM adapter that uses OpenAI's
-  Responses API, then compare its agent loop with the Chat Completions version.
+- **Responses API parity** — expand the separate Responses API demo with
+  streaming, tracing, and feature comparisons against Chat Completions.
 - **Prompt-injection hardening** — treat web/search outputs as untrusted data,
   wrap tool outputs in structured envelopes, and tell the model not to follow
   instructions found inside tool results.
