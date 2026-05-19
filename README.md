@@ -100,6 +100,10 @@ OpenAI-compatible `/chat/completions` and function calling there, but not
 OpenAI's `/responses` endpoint. Use the default `python -m repl` path for
 DeepSeek unless DeepSeek adds `/responses` support.
 
+For a detailed breakdown of how Chat Completions assembles `messages` versus
+how Responses API uses `input` and `previous_response_id`, see
+[`docs/session-notes.md`](docs/session-notes.md#prompt-construction).
+
 ### REPL commands
 
 Typed at the `user>` prompt. Handled by `repl.py`, never sent to the model.

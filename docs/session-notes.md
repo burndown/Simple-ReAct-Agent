@@ -119,27 +119,159 @@ request must preserve it in the assistant message history.
 
 ## Prompt Construction
 
-In the Chat Completions path, the request payload contains:
+The project now demonstrates two different ways to assemble model context:
+Chat Completions and Responses API.
 
-- `messages`: system prompt, user messages, assistant messages, tool result
-  messages, and final answers.
-- `tools`: JSON schemas for available functions.
-- `tool_choice: "auto"`: lets the model decide whether to call a tool.
-- `temperature`: defaults to `0.0`.
+### Chat Completions Prompt Assembly
 
-The system prompt is intentionally small:
+The default `repl.py` path is stateless from the API's point of view. The
+program owns a local `messages` list and sends the full relevant history on
+every call.
 
-```text
-You are a helpful ReAct-style agent.
-Current date: YYYY-MM-DD.
+The outgoing payload looks like this:
 
-Use the provided tools when they can answer part of the user's question more
-reliably than memory. After tool results are returned, continue until you can
-answer the user directly. Do not invent tool results.
+```json
+{
+  "model": "gpt-4o-mini",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful ReAct-style agent..."
+    },
+    {
+      "role": "user",
+      "content": "100 + 200"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "type": "function",
+          "function": {
+            "name": "calculate",
+            "arguments": "{\"expression\":\"100 + 200\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_1",
+      "content": "300"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "calculate",
+        "description": "Evaluate a numeric expression...",
+        "parameters": {}
+      }
+    }
+  ],
+  "tool_choice": "auto",
+  "temperature": 0.0
+}
 ```
 
-Tool definitions are not embedded as text in the system prompt anymore. They
-are sent through the API's `tools` field.
+The prompt is assembled from:
+
+- `system` message: global behavior instructions and current date.
+- `user` messages: each user turn.
+- `assistant` messages: previous answers or previous `tool_calls`.
+- `tool` messages: local tool execution results, tied to tool calls by
+  `tool_call_id`.
+- `tools`: JSON schemas for functions the model may call.
+
+For a fourth user turn, the local request normally includes the earlier turns
+too, because Chat Completions does not remember previous calls by itself.
+
+### Responses API Prompt Assembly
+
+The optional `responses_repl.py` path uses `/v1/responses`. It can continue a
+conversation by passing the latest `previous_response_id`.
+
+The first request looks like this:
+
+```json
+{
+  "model": "gpt-4o-mini",
+  "instructions": "You are a helpful ReAct-style agent...",
+  "input": "100 + 200",
+  "tools": [
+    {
+      "type": "function",
+      "name": "calculate",
+      "description": "Evaluate a numeric expression...",
+      "parameters": {}
+    }
+  ],
+  "temperature": 0.0
+}
+```
+
+If the model returns a function call, the next request sends only the new tool
+output plus the latest response ID:
+
+```json
+{
+  "model": "gpt-4o-mini",
+  "instructions": "You are a helpful ReAct-style agent...",
+  "previous_response_id": "resp_1",
+  "input": [
+    {
+      "type": "function_call_output",
+      "call_id": "call_1",
+      "output": "300"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "calculate",
+      "description": "Evaluate a numeric expression...",
+      "parameters": {}
+    }
+  ],
+  "temperature": 0.0
+}
+```
+
+For the next user turn, the request sends the new user input and the latest
+response ID:
+
+```json
+{
+  "model": "gpt-4o-mini",
+  "instructions": "You are a helpful ReAct-style agent...",
+  "previous_response_id": "resp_2",
+  "input": "divide that by 5",
+  "tools": []
+}
+```
+
+The important difference is that Responses API can use OpenAI-hosted state.
+The local code does not need to resend the whole message history every time.
+It does still send `instructions`, `tools`, and the new input or tool output.
+
+### Key Differences
+
+| Topic | Chat Completions | Responses API |
+|---|---|---|
+| Endpoint | `/v1/chat/completions` | `/v1/responses` |
+| Main context field | `messages` | `input` + `previous_response_id` |
+| System prompt | `messages[0].role = "system"` | `instructions` |
+| Tool definitions | `tools[].function` | top-level function tool objects |
+| Tool request from model | assistant message with `tool_calls` | output item with `type: "function_call"` |
+| Tool result back to model | `role: "tool"` message | `function_call_output` input item |
+| State ownership | local app resends history | API can continue from latest response ID |
+| Provider compatibility | widely supported by OpenAI-compatible APIs | OpenAI-specific unless a provider implements `/responses` |
+
+This is why the default path stays on Chat Completions for DeepSeek, while the
+Responses path is kept as a separate OpenAI-oriented demo.
 
 ## Important Concepts
 
@@ -225,4 +357,3 @@ set -e PRINT_PROMPTS
   `read_file`, and `write_note`.
 - Expand the Responses API path with streaming and trace comparison.
 - Add prompt-injection hardening for web/search outputs.
-
