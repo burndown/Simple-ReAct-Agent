@@ -1,97 +1,83 @@
-"""Inner ReAct loop: one user turn -> Thought/Action/Observation cycles -> answer.
+"""Inner agent loop: one user turn -> OpenAI tool calls -> answer.
 
 This is the heart of the agent. Every technique that makes ReAct work is here:
 
-  1. SYSTEM_PROMPT tells the model the output format and tool list.
-  2. chat() is called with stop=["Observation:"] so the model writes exactly
-     one Action and then halts (server-side stop sequence).
-  3. parse_action() pulls the first `Action: name[arg]` out of the reply
-     (client-side stop, in case the model overshoots the server stop).
-  4. dispatch() runs the tool. Failures become Observation: Error from ...
-     messages so the model can react instead of crashing the loop.
-  5. The Observation is appended as a user message, matching the original
-     ReAct paper convention (works on models not trained for the tool role).
-  6. `finish[answer]` is the sentinel action that ends the turn.
+  1. SYSTEM_PROMPT tells the model when to use tools.
+  2. chat() sends OpenAI function tool schemas with the conversation.
+  3. The model may return one or more structured tool_calls.
+  4. dispatch() runs each tool. Failures become tool outputs so the model can
+     recover instead of crashing the loop.
+  5. Tool outputs are appended as role="tool" messages with matching
+     tool_call_id values.
+  6. The turn ends when the model returns a normal assistant message with no
+     tool_calls.
 """
 
-import re
 from datetime import date
 
 from llm import chat
-from tools import dispatch, docs
+from tools import dispatch, tool_specs
 
 
-SYSTEM_PROMPT = f"""You are a ReAct agent. Answer questions by interleaving short Thoughts and Actions.
+SYSTEM_PROMPT = f"""You are a helpful ReAct-style agent.
 Current date: {date.today().isoformat()}.
 
-Available actions:
-{docs()}
-
-OUTPUT FORMAT (every assistant message must follow this exactly):
-Thought: <one short sentence of reasoning>
-Action: <action_name>[<input>]
-
-After writing one Action, STOP. The environment will reply with an Observation as a user message. Then continue with another Thought / Action. When you have the final answer, use finish[...].
-
-If a tool can answer part of a question, use it first instead of answering from memory.
-
-If an Observation starts with "Error from", treat it as feedback: analyze what went wrong and try a different Action. Do not finish[Error] on the first failure.
+Use the provided tools when they can answer part of the user's question more
+reliably than memory. After tool results are returned, continue until you can
+answer the user directly. Do not invent tool results.
 """
 
 
-# Matches one `Action: name[arg]`. The arg is greedy so bracketed content in
-# final answers, such as Markdown links or arXiv IDs, is not truncated.
-ACTION_RE = re.compile(r"Action:\s*(\w+)\s*\[(.*)\]\s*$", re.DOTALL)
-
-
-def parse_action(text: str) -> tuple[str, str | None, str | None]:
-    """Split an assistant reply into (thought, action_name, action_arg).
-
-    Returns (text, None, None) when no Action is found — the caller treats
-    that as the final answer (model decided to talk instead of act).
-    """
-    match = ACTION_RE.search(text)
-    if not match:
-        return text.strip(), None, None
-    thought = text[: match.start()]
-    thought = re.sub(r"^\s*Thought:\s*", "", thought, count=1).strip()
-    return thought, match.group(1), match.group(2).strip()
+def _assistant_message(message: dict) -> dict:
+    """Keep only fields that are valid to send back in chat history."""
+    result = {"role": "assistant", "content": message.get("content")}
+    if message.get("tool_calls"):
+        result["tool_calls"] = message["tool_calls"]
+    if message.get("reasoning_content"):
+        result["reasoning_content"] = message["reasoning_content"]
+    return result
 
 
 def agent_turn(messages: list[dict], max_steps: int = 8) -> str:
-    """Run the inner ReAct loop for one user turn.
+    """Run the inner tool-calling loop for one user turn.
 
     Mutates `messages` in place by appending:
-      - assistant messages (Thought + Action),
-      - user messages with content "Observation: ...",
+      - assistant messages, possibly with tool_calls,
+      - tool messages with tool outputs,
       - the final assistant message containing the user-facing answer.
 
     Returns the final answer string for the REPL to print.
     """
     for step in range(1, max_steps + 1):
-        reply = chat(messages, stop=["Observation:"])
-        messages.append({"role": "assistant", "content": reply})
+        reply = chat(messages, tools=tool_specs())
+        messages.append(_assistant_message(reply))
 
-        thought, action, arg = parse_action(reply)
-        print(f"  [step {step}] thought: {thought}")
+        tool_calls = reply.get("tool_calls") or []
+        if not tool_calls:
+            answer = reply.get("content") or ""
+            print(f"  [step {step}] final")
+            return answer.strip()
 
-        if action is None:
-            print(f"  [step {step}] (no action - using reply as final)")
-            return thought or reply.strip()
+        print(f"  [step {step}] tool_calls: {len(tool_calls)}")
+        for tool_call in tool_calls:
+            name = tool_call["function"]["name"]
+            arguments = tool_call["function"].get("arguments", "{}")
+            print(f"  [step {step}] tool: {name}({arguments})")
 
-        print(f"  [step {step}] action:  {action}[{arg}]")
+            try:
+                output = dispatch(name, arguments)
+            except Exception as exc:
+                output = f"Error from {name}: {exc}"
 
-        if action == "finish":
-            return arg
+            preview = output[:120] + ("..." if len(output) > 120 else "")
+            print(f"  [step {step}] result: {preview}")
 
-        try:
-            observation = dispatch(action, arg)
-        except Exception as exc:
-            observation = f"Error from {action}: {exc}"
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call["id"],
+                    "content": output,
+                }
+            )
 
-        preview = observation[:120] + ("..." if len(observation) > 120 else "")
-        print(f"  [step {step}] observ:  {preview}")
-
-        messages.append({"role": "user", "content": f"Observation: {observation}"})
-
-    return "(stopped: max_steps reached without finish)"
+    return "(stopped: max_steps reached without final answer)"

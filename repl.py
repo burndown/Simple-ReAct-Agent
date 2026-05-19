@@ -14,7 +14,7 @@ Operational commands (handled here, not seen by the model):
 from react import SYSTEM_PROMPT, agent_turn
 
 
-BANNER = """ReAct agent (OpenAI-compatible chat completions).
+BANNER = """ReAct agent (OpenAI function calling).
 Type a question. Multi-turn: each follow-up sees the full prior conversation.
 Commands: 'quit' or Ctrl-D to exit, '/clear' to clear history, '/history' to dump messages."""
 
@@ -40,7 +40,7 @@ def main() -> None:
             continue
         if user.lower() == "/history":
             for i, m in enumerate(messages):
-                preview = m["content"].replace("\n", " ")[:100]
+                preview = str(m.get("content", "")).replace("\n", " ")[:100]
                 print(f"  [{i}] {m['role']:9} {preview}")
             continue
 

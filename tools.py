@@ -1,13 +1,12 @@
-"""Tool functions the ReAct agent can call.
+"""Tool functions the agent can call through OpenAI function calling.
 
-Each tool is a plain Python function that takes a string arg and returns a
-string result. A single `TOOLS` dict is the source of truth for the dispatcher
-and the system prompt — adding a tool is one entry.
-
-`finish` is intentionally not a tool: it's a sentinel handled in react.agent_turn.
+Each tool is a plain Python function with string arguments and a string result.
+A single `TOOLS` dict is the source of truth for both the OpenAI tool schema
+and the dispatcher.
 """
 
 import ast
+import json
 import operator
 
 from ddgs import DDGS
@@ -71,25 +70,67 @@ def web_search(query: str) -> str:
     return "\n".join(lines)
 
 
-# --- dispatch table: name -> (callable, doc) --------------------------------
+# --- dispatch table: name -> metadata ---------------------------------------
 
-TOOLS: dict[str, tuple] = {
-    "calculate":  (calculate,  "calculate[expression]  - evaluate a math expression. Example: calculate[2**10 + 1889]"),
-    "web_search": (web_search, "web_search[query]      - top web snippets via DuckDuckGo. Example: web_search[Eiffel Tower height]"),
+TOOLS: dict[str, dict] = {
+    "calculate": {
+        "fn": calculate,
+        "description": "Evaluate a numeric expression using whitelisted arithmetic operators.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "expression": {
+                    "type": "string",
+                    "description": "A numeric expression, for example: 2**10 + 1889.",
+                },
+            },
+            "required": ["expression"],
+            "additionalProperties": False,
+        },
+    },
+    "web_search": {
+        "fn": web_search,
+        "description": "Return top web snippets for a search query via DuckDuckGo.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The web search query.",
+                },
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    },
 }
 
 
-def docs() -> str:
-    """Tool list rendered for the system prompt."""
-    lines = [f"- {doc}" for _, doc in TOOLS.values()]
-    lines.append("- finish[answer]            - return the final answer and stop. Example: finish[42]")
-    return "\n".join(lines)
+def tool_specs() -> list[dict]:
+    """OpenAI Chat Completions tool schemas."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": meta["description"],
+                "parameters": meta["parameters"],
+            },
+        }
+        for name, meta in TOOLS.items()
+    ]
 
 
-def dispatch(name: str, arg: str) -> str:
-    """Run a tool by name. Raises ValueError on unknown; tool exceptions propagate."""
+def dispatch(name: str, arguments: str | dict) -> str:
+    """Run a tool by name using JSON arguments from an OpenAI tool call."""
     if name not in TOOLS:
-        known = sorted(TOOLS) + ["finish"]
+        known = sorted(TOOLS)
         raise ValueError(f"unknown action {name!r}; known: {known}")
-    fn, _doc = TOOLS[name]
-    return fn(arg)
+
+    if isinstance(arguments, str):
+        arguments = json.loads(arguments or "{}")
+    if not isinstance(arguments, dict):
+        raise ValueError(f"tool arguments must be an object, got {type(arguments).__name__}")
+
+    fn = TOOLS[name]["fn"]
+    return fn(**arguments)

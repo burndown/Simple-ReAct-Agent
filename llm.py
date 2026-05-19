@@ -1,12 +1,14 @@
 """Single-shot wrapper around an OpenAI-compatible chat endpoint.
 
 This is the entire LLM interface: one pure function that takes a messages
-list and returns the assistant's next text. No state, no side effects beyond
-the HTTP call. The caller owns the messages list and decides what to do with
-the returned text.
+list and returns the assistant's next message. No state, no side effects
+beyond the HTTP call. The caller owns the messages list and decides what to do
+with returned text or tool calls.
 """
 
 import os
+import sys
+import json
 from pathlib import Path
 
 import httpx
@@ -50,6 +52,7 @@ def _env(name: str, default: str | None = None) -> str | None:
 OPENAI_BASE_URL = _env("OPENAI_BASE_URL", "https://api.openai.com/v1")
 OPENAI_API_KEY = _env("OPENAI_API_KEY")
 MODEL = _env("OPENAI_MODEL") or _env("MODEL", "gpt-4o-mini")
+PRINT_PROMPTS = (_env("PRINT_PROMPTS") or "").lower() in {"1", "true", "yes", "on"}
 
 
 def _chat_completions_url(base_url: str) -> str:
@@ -59,32 +62,43 @@ def _chat_completions_url(base_url: str) -> str:
     return f"{base_url}/chat/completions"
 
 
+def _print_payload(payload: dict) -> None:
+    if not PRINT_PROMPTS:
+        return
+    print("\n=== chat.completions payload ===", file=sys.stderr)
+    print(json.dumps(payload, ensure_ascii=False, indent=2), file=sys.stderr)
+    print("=== end payload ===\n", file=sys.stderr)
+
+
 def chat(
     messages: list[dict],
-    stop: list[str] | None = None,
+    tools: list[dict] | None = None,
     temperature: float = 0.0,
-) -> str:
+) -> dict:
     """One round-trip to an OpenAI-compatible /chat/completions endpoint.
 
     Args:
-        messages: list of {"role": "system"|"user"|"assistant", "content": str}.
-        stop: server-side stop sequences. Generation halts before emitting any.
+        messages: chat history, including system/user/assistant/tool messages.
+        tools: optional OpenAI function tool schemas.
         temperature: 0.0 = deterministic. Bump for variety.
 
     Returns:
-        The assistant's text content for this call.
+        The assistant message, which may contain content and/or tool_calls.
     """
     payload = {
         "model": MODEL,
         "messages": messages,
         "temperature": temperature,
     }
-    if stop:
-        payload["stop"] = stop
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
 
     headers = {"Content-Type": "application/json"}
     if OPENAI_API_KEY:
         headers["Authorization"] = f"Bearer {OPENAI_API_KEY}"
+
+    _print_payload(payload)
 
     response = httpx.post(
         _chat_completions_url(OPENAI_BASE_URL),
@@ -100,4 +114,4 @@ def chat(
             f"chat request failed: {response.status_code} {response.reason_phrase} "
             f"for {_chat_completions_url(OPENAI_BASE_URL)}: {detail}"
         ) from exc
-    return response.json()["choices"][0]["message"]["content"]
+    return response.json()["choices"][0]["message"]

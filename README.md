@@ -1,12 +1,11 @@
 # Local ReAct Agent
 
-A minimal, "hand-built" ReAct agent that talks to any OpenAI-compatible
-Chat Completions endpoint. Four short Python files, no SDK abstractions over
-the loop — every Action is parsed from text and dispatched manually.
+A minimal, "hand-built" ReAct agent that talks to OpenAI's Chat Completions
+API. Four short Python files, no SDK abstractions over the loop — every
+tool call is requested through OpenAI function calling and dispatched manually.
 
-Works with OpenAI, Azure/OpenAI-compatible gateways, local servers that expose
-`/v1/chat/completions`, and providers such as LM Studio or Ollama's compatible
-API mode.
+It also works with OpenAI-compatible gateways or local servers by overriding
+`OPENAI_BASE_URL`.
 
 ## Pseudo Code
 
@@ -14,51 +13,48 @@ API mode.
 
 ## What this teaches
 
-- **Chat API roles** — every message is tagged `system` / `user` / `assistant`.
-  Tool observations are injected as `user` messages with an `Observation:`
-  prefix (the original 2022 ReAct paper convention).
-- **Stop sequences** — the Chat Completions `stop` parameter halts generation
-  before the model writes `Observation:`, so each assistant message contains
-  exactly one Action. A regex catches any stragglers client-side.
+- **Chat API roles** — every message is tagged `system` / `user` /
+  `assistant` / `tool`. Tool outputs are returned with the matching
+  `tool_call_id`.
+- **Function calling** — tools are exposed as JSON schemas. The model returns
+  structured `tool_calls`; the Python loop executes them and sends the outputs
+  back as `role: tool` messages.
 - **Prompt-as-history** — the LLM is stateless. The full `messages` list is
   re-sent every turn. That's literally the "context window" filling up.
 - **Inner vs outer loop** — the outer loop is multi-turn conversation
   (`repl.py`). The inner loop is the ReAct iteration within one user turn
   (`react.py`). They're two distinct loops doing different jobs.
-- **Tool dispatch** — `tools.TOOLS` is a single dict mapping name → function.
-  The system prompt is generated from it. Adding a tool is one entry.
-- **No SDK tool-use** — the agent loop is hand-built on top of a plain chat
-  API. Every Action is parsed from text and dispatched manually.
+- **Tool dispatch** — `tools.TOOLS` is a single dict mapping name → function
+  metadata. Adding a tool is one entry plus its JSON schema.
+- **No SDK wrapper** — the agent loop is hand-built on top of raw HTTP calls
+  to Chat Completions.
 
 ## Files
 
 | File | Lines | What it does |
 |---|---|---|
-| `llm.py` | ~40 | One pure function: `chat(messages, stop)` → text |
-| `tools.py` | ~95 | `calculate` (AST eval), `web_search` (DuckDuckGo, no key), `dispatch` |
-| `react.py` | ~95 | `SYSTEM_PROMPT`, `parse_action`, `agent_turn` |
+| `llm.py` | ~100 | One pure function: `chat(messages, tools)` → assistant message |
+| `tools.py` | ~130 | tool schemas, `calculate`, `web_search`, `dispatch` |
+| `react.py` | ~80 | `SYSTEM_PROMPT`, tool-call loop, `agent_turn` |
 | `repl.py` | ~55 | Multi-turn REPL with `/clear`/`/history` commands |
 | `requirements.txt` | 2 | `httpx`, `ddgs` |
 
 ## Prereqs
 
 - Python 3.10+
-- An OpenAI-compatible chat completions endpoint
-- `OPENAI_API_KEY` for providers that require authentication
+- An OpenAI API key
 
 ## One-time setup
 
 ```bash
-export OPENAI_API_KEY="your-api-key"
+export OPENAI_API_KEY="your-openai-api-key"
 export OPENAI_MODEL="gpt-4o-mini"
-
-# Optional. Defaults to https://api.openai.com/v1.
-export OPENAI_BASE_URL="https://api.openai.com/v1"
 ```
 
-For a local OpenAI-compatible server, point `OPENAI_BASE_URL` at its `/v1`
-base URL and set `OPENAI_MODEL` to the local model name. If the server does
-not require auth, `OPENAI_API_KEY` can be left unset.
+`OPENAI_BASE_URL` defaults to `https://api.openai.com/v1`, so you normally do
+not need to set it. For a local OpenAI-compatible server, point
+`OPENAI_BASE_URL` at its `/v1` base URL and set `OPENAI_MODEL` to the local
+model name.
 
 ## Per-session setup
 
@@ -91,23 +87,21 @@ Sample session:
 
 ```
 user> add 100 to the year of the last presidential election in Chile               
-  [step 1] thought: I need to find the year of the last presidential election in Chile.
-  [step 1] action:  web_search[last presidential election in Chile]
-  [step 1] observ:  - 2025 Chilean general election - Wikipedia: General elections were held in Chile on 16 November 2025. Voters went to th...
-  [step 2] thought: The last presidential election in Chile was in 2025, so I need to add 100 to that year.
-  [step 2] action:  calculate[2025 + 100]
-  [step 2] observ:  2125
-  [step 3] thought: The result of adding 100 to the year of the last presidential election in Chile is indeed 2125.
-  [step 3] action:  finish[2125]
+  [step 1] tool_calls: 1
+  [step 1] tool: web_search({"query":"last presidential election in Chile"})
+  [step 1] result: - 2025 Chilean general election - Wikipedia: General elections were held in Chile on 16 November 2025...
+  [step 2] tool_calls: 1
+  [step 2] tool: calculate({"expression":"2025 + 100"})
+  [step 2] result: 2125
+  [step 3] final
 
 assistant> 2125
 
 user> divide that by 5
-  [step 1] thought: I need to divide 2125 by 5 to get the final answer.
-  [step 1] action:  calculate[2125 / 5]
-  [step 1] observ:  425.0
-  [step 2] thought: The result of dividing 2125 by 5 is indeed 425.0, which makes sense as it's a simple division problem.
-  [step 2] action:  finish[425.0]
+  [step 1] tool_calls: 1
+  [step 1] tool: calculate({"expression":"2125 / 5"})
+  [step 1] result: 425.0
+  [step 2] final
 
 assistant> 425.0
 
@@ -117,13 +111,35 @@ user> /clear
 
 ## Customize
 
-- **Add a tool** — add one entry to `tools.TOOLS`. The system prompt picks
-  it up automatically via `docs()`.
+- **Add a tool** — add one entry to `tools.TOOLS` with `fn`, `description`,
+  and `parameters`. The OpenAI tool schema is generated from it.
 - **Swap the model** — set `OPENAI_MODEL` before running the REPL.
 - **Swap the endpoint** — set `OPENAI_BASE_URL` to another compatible `/v1`
   base URL.
 - **More steps** — raise `max_steps` in `agent_turn` (default 8).
 - **Less deterministic** — raise `temperature` in the `chat` call (default 0).
+
+## Planned Features
+
+This project is intentionally small, but the next useful upgrades are:
+
+- **Focused tests** — cover `tool_specs()`, `dispatch()`, the tool-call loop,
+  tool errors, multiple tool calls in one assistant message, and final-answer
+  handling.
+- **Structured tool results** — return JSON strings such as
+  `{"ok": true, "result": "300"}` or `{"ok": false, "error": "..."}` instead
+  of plain text, so the model can distinguish successful outputs from errors.
+- **Run traces** — record each step as structured data: step number, tool name,
+  arguments, output preview, and final answer. Keep the REPL concise while
+  preserving a full debug log for teaching and inspection.
+- **More practical tools** — add examples such as `fetch_url(url)`,
+  `arxiv_search(query)`, `current_time()`, `read_file(path)`, or
+  `write_note(title, content)`.
+- **Responses API variant** — add a second LLM adapter that uses OpenAI's
+  Responses API, then compare its agent loop with the Chat Completions version.
+- **Prompt-injection hardening** — treat web/search outputs as untrusted data,
+  wrap tool outputs in structured envelopes, and tell the model not to follow
+  instructions found inside tool results.
 
 ## Troubleshooting
 
@@ -132,9 +148,8 @@ user> /clear
 - `404 Not Found`: `OPENAI_BASE_URL` is probably wrong. Use the provider's
   `/v1` base URL, not a dashboard URL.
 - `httpx.ConnectError`: the configured endpoint is unreachable.
-- Model emits text instead of `Action: ...`: format drift. The loop catches
-  it and prints `(no action - using reply as final)`. Smaller models tend to
-  drift more.
+- Model never calls tools: confirm the model supports Chat Completions tool
+  calling and that `OPENAI_MODEL` is set to a tool-capable model.
 - Tool raises an exception: caught and reported as
-  `Observation: Error from <tool>: <message>` so the model can react.
+  a tool output like `Error from <tool>: <message>` so the model can react.
 - Answers are not logical: try a stronger `OPENAI_MODEL`.
