@@ -167,9 +167,9 @@ This project is intentionally small, but the next useful upgrades are:
 - **Focused tests** — cover `tool_specs()`, `dispatch()`, the tool-call loop,
   tool errors, multiple tool calls in one assistant message, and final-answer
   handling.
-- **Structured tool results** — return JSON strings such as
-  `{"ok": true, "result": "300"}` or `{"ok": false, "error": "..."}` instead
-  of plain text, so the model can distinguish successful outputs from errors.
+- **Structured tool results** — tool outputs are now JSON strings such as
+  `{"ok": true, "tool": "calculate", "result": "300"}` or
+  `{"ok": false, "tool": "calculate", "error": {"type": "...", "message": "..."}}`.
 - **Run traces** — record each step as structured data: step number, tool name,
   arguments, output preview, and final answer. Keep the REPL concise while
   preserving a full debug log for teaching and inspection.
@@ -192,5 +192,5 @@ This project is intentionally small, but the next useful upgrades are:
 - Model never calls tools: confirm the model supports Chat Completions tool
   calling and that `OPENAI_MODEL` is set to a tool-capable model.
 - Tool raises an exception: caught and reported as
-  a tool output like `Error from <tool>: <message>` so the model can react.
+  a structured JSON tool output with `ok: false` so the model can react.
 - Answers are not logical: try a stronger `OPENAI_MODEL`.

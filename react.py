@@ -16,7 +16,7 @@ This is the heart of the agent. Every technique that makes ReAct work is here:
 from datetime import date
 
 from llm import chat
-from tools import dispatch, tool_specs
+from tools import dispatch, tool_output_error, tool_output_ok, tool_specs
 
 
 SYSTEM_PROMPT = f"""You are a helpful ReAct-style agent.
@@ -25,6 +25,9 @@ Current date: {date.today().isoformat()}.
 Use the provided tools when they can answer part of the user's question more
 reliably than memory. After tool results are returned, continue until you can
 answer the user directly. Do not invent tool results.
+
+Tool outputs are JSON objects. Treat {{"ok": true, "result": ...}} as success.
+Treat {{"ok": false, "error": ...}} as error feedback and recover when possible.
 """
 
 
@@ -65,9 +68,9 @@ def agent_turn(messages: list[dict], max_steps: int = 8) -> str:
             print(f"  [step {step}] tool: {name}({arguments})")
 
             try:
-                output = dispatch(name, arguments)
+                output = tool_output_ok(name, dispatch(name, arguments))
             except Exception as exc:
-                output = f"Error from {name}: {exc}"
+                output = tool_output_error(name, exc)
 
             preview = output[:120] + ("..." if len(output) > 120 else "")
             print(f"  [step {step}] result: {preview}")

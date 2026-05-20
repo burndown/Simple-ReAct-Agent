@@ -27,6 +27,7 @@ OpenAI-compatible provider，比如 DeepSeek 的 `/chat/completions`。
 - 从文本式 ReAct `Action: ...` 正则解析，升级为 OpenAI function calling。
 - 为 `calculate` 和 `web_search` 增加 JSON Schema tool 定义。
 - tool 执行结果改为通过 `role: "tool"` + `tool_call_id` 放回 `messages`。
+- tool 输出内容统一包装成 JSON 字符串，成功为 `ok: true`，失败为 `ok: false`。
 - 对 DeepSeek thinking 模式返回的 `reasoning_content` 做保留，避免下一轮请求
   报错。
 - 新增独立 Responses API demo，不覆盖默认 Chat Completions 路径。
@@ -57,12 +58,22 @@ tool 执行结果必须放回 `messages`：
 {
   "role": "tool",
   "tool_call_id": "call_...",
-  "content": "300"
+  "content": "{\"ok\": true, \"tool\": \"calculate\", \"result\": \"300\"}"
 }
 ```
 
 其中 `tool_call_id` 必须匹配上一条 assistant message 里的 tool call id。否则
 很多 OpenAI-compatible API 会直接返回 400。
+
+工具失败时也使用同样的 JSON envelope：
+
+```json
+{
+  "role": "tool",
+  "tool_call_id": "call_...",
+  "content": "{\"ok\": false, \"tool\": \"calculate\", \"error\": {\"type\": \"ValueError\", \"message\": \"unsupported expression node: Call\"}}"
+}
+```
 
 ## Responses API 流程
 
@@ -95,7 +106,7 @@ tool 执行结果在 Responses API 中不是 `role: "tool"` message，而是 inp
 {
   "type": "function_call_output",
   "call_id": "call_...",
-  "output": "300"
+  "output": "{\"ok\": true, \"tool\": \"calculate\", \"result\": \"300\"}"
 }
 ```
 
@@ -132,7 +143,7 @@ Chat Completions 的一次请求大致长这样：
     {
       "role": "tool",
       "tool_call_id": "call_1",
-      "content": "300"
+      "content": "{\"ok\": true, \"tool\": \"calculate\", \"result\": \"300\"}"
     }
   ],
   "tools": [
@@ -196,7 +207,7 @@ Responses API 的请求结构不同。第一轮可能是：
     {
       "type": "function_call_output",
       "call_id": "call_1",
-      "output": "300"
+      "output": "{\"ok\": true, \"tool\": \"calculate\", \"result\": \"300\"}"
     }
   ],
   "tools": [
@@ -339,6 +350,37 @@ Completions 多轮对话仍然需要本地维护 `messages`。
 - tool error 的结构化返回。
 
 Function calling 解决的是“更可靠地表达工具调用意图”，不是替代业务校验。
+
+### 5.1 Tool result 的结构化 JSON envelope
+
+当前代码让工具函数继续返回业务字符串，由 agent runtime 统一包装：
+
+成功：
+
+```json
+{
+  "ok": true,
+  "tool": "calculate",
+  "result": "300"
+}
+```
+
+失败：
+
+```json
+{
+  "ok": false,
+  "tool": "calculate",
+  "error": {
+    "type": "ValueError",
+    "message": "unsupported expression node: Call"
+  }
+}
+```
+
+注意：Chat Completions 的 `role: "tool"` `content` 和 Responses API 的
+`function_call_output.output` 仍然都是字符串，只是字符串内容是 JSON。这样模型和日志
+系统都能明确区分成功结果与错误反馈。
 
 ### 6. Streaming 与 background mode
 
@@ -530,7 +572,6 @@ set -e PRINT_PROMPTS
   长上下文和 streaming。
 - 增加 focused tests：tool schema、dispatch、tool-call loop、tool error、多 tool call、
   final answer。
-- 把 tool result 改成结构化 JSON 字符串，而不是纯文本。
 - 增加 run trace，记录每一步 tool name、arguments、output preview、final answer。
 - 增加更实用的工具：`fetch_url`、`arxiv_search`、`current_time`、`read_file`、
   `write_note`。

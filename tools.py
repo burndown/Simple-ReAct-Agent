@@ -134,6 +134,33 @@ def responses_tool_specs() -> list[dict]:
     ]
 
 
+def tool_output_ok(tool: str, result: str) -> str:
+    """Wrap a successful tool output as a JSON string."""
+    return json.dumps(
+        {
+            "ok": True,
+            "tool": tool,
+            "result": result,
+        },
+        ensure_ascii=False,
+    )
+
+
+def tool_output_error(tool: str, exc: Exception) -> str:
+    """Wrap a failed tool output as a JSON string."""
+    return json.dumps(
+        {
+            "ok": False,
+            "tool": tool,
+            "error": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        },
+        ensure_ascii=False,
+    )
+
+
 def dispatch(name: str, arguments: str | dict) -> str:
     """Run a tool by name using JSON arguments from an OpenAI tool call."""
     if name not in TOOLS:

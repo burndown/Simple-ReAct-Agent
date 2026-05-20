@@ -7,7 +7,7 @@ Responses API output items instead of Chat Completions messages.
 from datetime import date
 
 from responses_llm import create_response
-from tools import dispatch, responses_tool_specs
+from tools import dispatch, responses_tool_specs, tool_output_error, tool_output_ok
 
 
 INSTRUCTIONS = f"""You are a helpful ReAct-style agent.
@@ -16,6 +16,9 @@ Current date: {date.today().isoformat()}.
 Use the provided tools when they can answer part of the user's question more
 reliably than memory. After tool results are returned, continue until you can
 answer the user directly. Do not invent tool results.
+
+Tool outputs are JSON objects. Treat {{"ok": true, "result": ...}} as success.
+Treat {{"ok": false, "error": ...}} as error feedback and recover when possible.
 """
 
 
@@ -68,9 +71,9 @@ def agent_turn(user_input: str, previous_response_id: str | None = None, max_ste
             print(f"  [step {step}] tool: {name}({arguments})")
 
             try:
-                output = dispatch(name, arguments)
+                output = tool_output_ok(name, dispatch(name, arguments))
             except Exception as exc:
-                output = f"Error from {name}: {exc}"
+                output = tool_output_error(name, exc)
 
             preview = output[:120] + ("..." if len(output) > 120 else "")
             print(f"  [step {step}] result: {preview}")
@@ -86,4 +89,3 @@ def agent_turn(user_input: str, previous_response_id: str | None = None, max_ste
         next_input = tool_outputs
 
     return "(stopped: max_steps reached without final answer)", response_id
-
