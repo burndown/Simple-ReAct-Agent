@@ -1,57 +1,57 @@
-# Session Notes: Simple ReAct Agent
+# 会话整理：Simple ReAct Agent
 
-Date: 2026-05-19
+日期：2026-05-20
 
-## Goal
+## 目标
 
-Convert a minimal Ollama-based ReAct demo into an OpenAI-compatible agent demo,
-then evolve it from text-based `Action: tool[arg]` parsing to structured OpenAI
-function calling.
+这次会话的目标是把一个最小化的 Ollama ReAct demo，逐步改造成一个
+OpenAI-compatible agent demo，并进一步从文本式 `Action: tool[arg]` 升级为
+OpenAI function calling。
 
-## Current State
+当前项目保留两条独立路径：
 
-The project now has two independent agent paths:
+- `python -m repl`：默认路径，使用 Chat Completions + function calling。
+- `python -m responses_repl`：独立实验路径，使用 OpenAI Responses API。
 
-- `python -m repl` uses Chat Completions with structured function calling.
-- `python -m responses_repl` is a separate OpenAI Responses API comparison
-  path.
+默认路径仍然是 Chat Completions，因为它兼容 OpenAI 以及很多
+OpenAI-compatible provider，比如 DeepSeek 的 `/chat/completions`。
 
-The default path remains Chat Completions because it is compatible with OpenAI
-and many OpenAI-compatible providers, including DeepSeek's chat endpoint.
+## 已完成的主要改动
 
-## Main Changes
+- 把 Ollama `/api/chat` 替换为 OpenAI-compatible `/chat/completions`。
+- 增加 `.env` 读取，支持 `KEY=value`、`export KEY=value`、fish shell 的
+  `set -x KEY value`。
+- 增加 `OPENAI_API_KEY`、`OPENAI_MODEL`、`OPENAI_BASE_URL` 配置。
+- 增加 `PRINT_PROMPTS=1`，可以打印每次发给模型的 request payload，但不打印
+  Authorization header。
+- 从文本式 ReAct `Action: ...` 正则解析，升级为 OpenAI function calling。
+- 为 `calculate` 和 `web_search` 增加 JSON Schema tool 定义。
+- tool 执行结果改为通过 `role: "tool"` + `tool_call_id` 放回 `messages`。
+- 对 DeepSeek thinking 模式返回的 `reasoning_content` 做保留，避免下一轮请求
+  报错。
+- 新增独立 Responses API demo，不覆盖默认 Chat Completions 路径。
 
-- Replaced Ollama `/api/chat` calls with OpenAI-compatible
-  `/chat/completions`.
-- Added `.env` loading with support for `KEY=value`, `export KEY=value`, and
-  fish-style `set -x KEY value`.
-- Added `OPENAI_MODEL`, `OPENAI_BASE_URL`, and `OPENAI_API_KEY` configuration.
-- Added `PRINT_PROMPTS=1` to print each outgoing request payload without
-  printing authorization headers.
-- Replaced text-based ReAct action parsing with OpenAI function calling.
-- Added structured tool schemas for `calculate` and `web_search`.
-- Added `role: tool` result messages with matching `tool_call_id`.
-- Preserved DeepSeek `reasoning_content` in assistant history when present.
-- Added a separate Responses API implementation without replacing the default
-  Chat Completions implementation.
+## 默认 Chat Completions 流程
 
-## Default Chat Completions Flow
+默认 `repl.py` 使用 Chat Completions。这个 API 从服务端角度看是无状态的，
+所以本地程序必须维护完整的 `messages` 历史，并在每次请求时把当前需要的上下文
+发给模型。
 
-The default runtime uses local `messages` history.
+基本流程：
 
 ```text
-user input
+用户输入
   -> append role=user
-  -> send messages + tools to /chat/completions
-  -> model returns assistant tool_calls
-  -> append assistant message with tool_calls
-  -> execute local tool
-  -> append role=tool with tool_call_id and output
-  -> call model again
-  -> no tool_calls means final answer
+  -> 发送 messages + tools 到 /chat/completions
+  -> 模型返回 assistant tool_calls
+  -> append assistant message，保留 tool_calls
+  -> 本地 dispatch 执行 tool
+  -> append role=tool，带上 tool_call_id 和执行结果
+  -> 再次调用模型
+  -> 如果没有 tool_calls，则 assistant content 是最终答案
 ```
 
-Tool results must be placed back into `messages`:
+tool 执行结果必须放回 `messages`：
 
 ```json
 {
@@ -61,14 +61,17 @@ Tool results must be placed back into `messages`:
 }
 ```
 
-The `tool_call_id` must match the previous assistant tool call ID.
+其中 `tool_call_id` 必须匹配上一条 assistant message 里的 tool call id。否则
+很多 OpenAI-compatible API 会直接返回 400。
 
-## Responses API Flow
+## Responses API 流程
 
-The optional Responses API path uses `/v1/responses`.
+独立的 `responses_repl.py` 使用 OpenAI `/v1/responses`。
 
-Instead of resending all local `messages`, it can continue state with
-`previous_response_id`:
+Responses API 可以通过 `previous_response_id` 接续服务端保存的 response 链。
+因此本地不需要像 Chat Completions 一样每次都重发完整 `messages`。
+
+示例：
 
 ```text
 input: "100 + 200"
@@ -84,9 +87,9 @@ previous_response_id: resp_2
 => resp_3
 ```
 
-Each turn should use the latest response ID, not the first response ID.
+注意：每次都应该传**最新的** response id，而不是第一次的 response id。
 
-Tool output is returned as a Responses input item:
+tool 执行结果在 Responses API 中不是 `role: "tool"` message，而是 input item：
 
 ```json
 {
@@ -96,39 +99,9 @@ Tool output is returned as a Responses input item:
 }
 ```
 
-## DeepSeek Compatibility
+## Chat Completions 如何组装 Prompt
 
-DeepSeek supports an OpenAI-compatible Chat Completions endpoint:
-
-```text
-https://api.deepseek.com/chat/completions
-```
-
-Use the default path for DeepSeek:
-
-```bash
-python -m repl
-```
-
-DeepSeek's public docs currently describe Chat Completions and function calling
-there, not OpenAI's `/responses` endpoint. The Responses API path should be
-used with OpenAI unless the provider explicitly supports `/responses`.
-
-DeepSeek may return `reasoning_content` in thinking mode. If present, the next
-request must preserve it in the assistant message history.
-
-## Prompt Construction
-
-The project now demonstrates two different ways to assemble model context:
-Chat Completions and Responses API.
-
-### Chat Completions Prompt Assembly
-
-The default `repl.py` path is stateless from the API's point of view. The
-program owns a local `messages` list and sends the full relevant history on
-every call.
-
-The outgoing payload looks like this:
+Chat Completions 的一次请求大致长这样：
 
 ```json
 {
@@ -177,24 +150,23 @@ The outgoing payload looks like this:
 }
 ```
 
-The prompt is assembled from:
+这里的 prompt/context 由几部分组成：
 
-- `system` message: global behavior instructions and current date.
-- `user` messages: each user turn.
-- `assistant` messages: previous answers or previous `tool_calls`.
-- `tool` messages: local tool execution results, tied to tool calls by
-  `tool_call_id`.
-- `tools`: JSON schemas for functions the model may call.
+- `system` message：全局行为约束和当前日期。
+- `user` messages：用户每一轮输入。
+- `assistant` messages：模型过往回答，或者模型请求过的 `tool_calls`。
+- `tool` messages：本地工具执行结果，通过 `tool_call_id` 对应某次 tool call。
+- `tools`：函数工具的 JSON Schema。
 
-For a fourth user turn, the local request normally includes the earlier turns
-too, because Chat Completions does not remember previous calls by itself.
+重要点：
 
-### Responses API Prompt Assembly
+- 工具定义不再写进 system prompt 文本里，而是通过 `tools` 字段传给模型。
+- 第 4 轮对话时，通常要把第 1、2、3 轮相关 `messages` 一起发过去。
+- Chat Completions 本身不记得上一轮请求，本地代码必须维护和裁剪历史。
 
-The optional `responses_repl.py` path uses `/v1/responses`. It can continue a
-conversation by passing the latest `previous_response_id`.
+## Responses API 如何组装 Prompt
 
-The first request looks like this:
+Responses API 的请求结构不同。第一轮可能是：
 
 ```json
 {
@@ -213,8 +185,7 @@ The first request looks like this:
 }
 ```
 
-If the model returns a function call, the next request sends only the new tool
-output plus the latest response ID:
+如果模型返回 function call，下一轮回传 tool 结果：
 
 ```json
 {
@@ -240,8 +211,7 @@ output plus the latest response ID:
 }
 ```
 
-For the next user turn, the request sends the new user input and the latest
-response ID:
+下一轮用户继续追问：
 
 ```json
 {
@@ -253,41 +223,196 @@ response ID:
 }
 ```
 
-The important difference is that Responses API can use OpenAI-hosted state.
-The local code does not need to resend the whole message history every time.
-It does still send `instructions`, `tools`, and the new input or tool output.
+Responses API 的重点是：
 
-### Key Differences
+- 本地只需要保存最新的 `previous_response_id`。
+- 服务端通过 response 链恢复之前上下文。
+- 本地不需要每次重发完整 `messages`。
+- 但仍然要发送当前 `input`、`tools`，以及通常也要发送 `instructions`。
 
-| Topic | Chat Completions | Responses API |
+## Chat Completions 与 Responses API 对比
+
+| 维度 | Chat Completions | Responses API |
 |---|---|---|
 | Endpoint | `/v1/chat/completions` | `/v1/responses` |
-| Main context field | `messages` | `input` + `previous_response_id` |
-| System prompt | `messages[0].role = "system"` | `instructions` |
-| Tool definitions | `tools[].function` | top-level function tool objects |
-| Tool request from model | assistant message with `tool_calls` | output item with `type: "function_call"` |
-| Tool result back to model | `role: "tool"` message | `function_call_output` input item |
-| State ownership | local app resends history | API can continue from latest response ID |
-| Provider compatibility | widely supported by OpenAI-compatible APIs | OpenAI-specific unless a provider implements `/responses` |
+| 主要上下文字段 | `messages` | `input` + `previous_response_id` |
+| 系统提示 | `role: "system"` message | `instructions` |
+| 工具定义 | `tools[].function` | 顶层 function tool object |
+| 模型请求工具 | assistant message 里的 `tool_calls` | output item：`type: "function_call"` |
+| 工具结果回传 | `role: "tool"` message | `function_call_output` input item |
+| 状态管理 | 本地维护并重发历史 | 服务端可根据最新 response id 接续 |
+| 上下文占用 | 历史轮次占用模型 context | 历史轮次仍然占用模型 context |
+| 兼容性 | OpenAI-compatible provider 普遍支持 | 偏 OpenAI 专有，provider 需明确支持 |
 
-This is why the default path stays on Chat Completions for DeepSeek, while the
-Responses path is kept as a separate OpenAI-oriented demo.
+## 关键结论：Responses API 不等于无限上下文
 
-## Important Concepts
+`previous_response_id` 减少的是：
 
-### ReAct
+- 客户端重复发送长 `messages` 的网络 payload。
+- 客户端维护完整对话历史的复杂度。
+- agent 状态接续的本地代码负担。
 
-ReAct means reasoning plus acting. The model decides when to call tools, the
-runtime executes those tools, and tool results are sent back so the model can
-continue.
+它**不减少**：
 
-With function calling, the old text format:
+- 模型推理时需要看到的历史上下文。
+- 历史对话、tool calls、tool outputs 对 context window 的占用。
+- 历史 input tokens 可能产生的计费影响。
+
+所以，如果一个模型支持 10M context，那么 Chat Completions 和 Responses API 仍然都受
+这个 10M context window 限制。Responses API 不会把 10M 变成无限记忆。
+
+可以这样总结：
 
 ```text
-Action: calculate[100 + 200]
+Responses API 减少的是客户端历史管理和网络传输成本，
+不是模型上下文占用，也不是历史 token 成本。
 ```
 
-becomes structured:
+## 重要但容易忽略的点
+
+### 1. Responses API 的 instructions 不会自动继承
+
+使用 `previous_response_id` 时，不要假设上一轮的 `instructions` 会自动继承到下一轮。
+因此当前代码每次调用 `create_response()` 都传入 `instructions=INSTRUCTIONS`，这是有意为之。
+
+如果不这样做，模型后续轮次可能缺少系统级约束。
+
+### 2. Responses API 还有 Conversations API
+
+`previous_response_id` 是链式接续：
+
+```text
+resp_1 -> resp_2 -> resp_3
+```
+
+OpenAI 还提供 Conversations API，可以创建长期 conversation object，用于跨 session、
+跨设备、跨任务保存会话状态。
+
+简单理解：
+
+```text
+previous_response_id:
+适合短链路、单个连续任务。
+
+conversation:
+更像持久会话容器，适合长期会话和跨 session 状态。
+```
+
+### 3. Chat Completions 也有 store，但不是同一种状态管理
+
+Chat Completions 可以通过 `store` 保存 completion，并后续 retrieve/list。
+
+但这不等价于 Responses API 的 `previous_response_id` 状态接续。常规 Chat
+Completions 多轮对话仍然需要本地维护 `messages`。
+
+### 4. tool_choice 是重要控制点
+
+当前代码使用：
+
+```json
+"tool_choice": "auto"
+```
+
+意思是模型自己决定是否调用工具。
+
+生产环境里常见策略：
+
+- `auto`：模型自行决定。
+- `none`：禁止调用工具。
+- `required`：必须调用至少一个工具。
+- force specific tool：强制调用某个工具。
+- allowed tools：当前步骤只允许某些工具。
+
+例如代码 agent 可以限制某一步只允许读文件，不允许写文件。
+
+### 5. Function calling 仍然需要服务端校验
+
+工具参数是结构化的，但不代表一定安全或正确。
+
+仍然需要在应用侧做：
+
+- JSON parse。
+- required 字段校验。
+- enum/range 校验。
+- path/url 权限校验。
+- 参数长度限制。
+- tool error 的结构化返回。
+
+Function calling 解决的是“更可靠地表达工具调用意图”，不是替代业务校验。
+
+### 6. Streaming 与 background mode
+
+Responses API 更适合 agentic workflow 的原因之一，是它面向更复杂的输出 item、
+长任务、异步执行和 background mode。
+
+长任务，比如深度研究、复杂 coding、长 reasoning，不一定适合同步请求一直等待。
+background mode 可以让任务后台运行，再轮询结果。
+
+### 7. 数据保留与合规
+
+如果使用服务端状态，例如：
+
+- `previous_response_id`
+- Conversations API
+- stored responses
+- background mode
+
+就要考虑数据保留策略。
+
+某些企业场景要求 Zero Data Retention，这会影响是否能使用服务端状态能力。
+
+### 8. Debuggability：Chat 更透明，Responses 更省心
+
+Chat Completions：
+
+- 优点：完整上下文在本地，容易打印、审计、重放、裁剪。
+- 缺点：payload 越来越大，本地状态管理更麻烦。
+
+Responses API：
+
+- 优点：本地只保存最新 response id，agent 状态接续更轻。
+- 缺点：完整上下文不一定在本地一眼可见，最好自己保存 trace。
+
+所以即使用 Responses API，也建议本地记录 run trace。
+
+## DeepSeek 兼容性
+
+DeepSeek 当前公开文档支持 OpenAI-compatible Chat Completions：
+
+```text
+https://api.deepseek.com/chat/completions
+```
+
+因此 DeepSeek 应使用默认路径：
+
+```bash
+python -m repl
+```
+
+DeepSeek 文档目前没有明确支持 OpenAI `/responses` endpoint，所以：
+
+```text
+DeepSeek -> Chat Completions path
+OpenAI Responses-capable model -> responses_repl.py
+```
+
+另外，DeepSeek thinking 模式可能返回 `reasoning_content`。如果返回了这个字段，下一次
+请求需要把它保留在 assistant message history 中，否则可能报错。
+
+## ReAct 基础概念
+
+ReAct = Reasoning + Acting。
+
+原始 ReAct 常见格式：
+
+```text
+Thought: 我需要计算这个数字
+Action: calculate[100 + 200]
+Observation: 300
+Final Answer: 300
+```
+
+现在使用 function calling 后，`Action` 不再是文本，而是结构化 tool call：
 
 ```json
 {
@@ -296,64 +421,72 @@ becomes structured:
 }
 ```
 
-### Function Calling vs ReAct
+ReAct 是 agent loop 模式，function calling 是工具调用接口。二者关系是：
 
-ReAct is the agent loop pattern. Function calling is the structured interface
-used to request tool execution reliably.
+```text
+ReAct 决定何时调用工具、根据结果如何继续。
+Function calling 提供可靠的结构化工具调用格式。
+```
 
-### Modern Agents
+## 现代 Agent 通常不是纯 ReAct
 
-Production agents are rarely pure ReAct. They usually combine:
+真实产品里的 agent 通常是复合结构：
 
-- ReAct execution loops
+- ReAct execution loop
 - planning
 - structured tool calling
-- retrieval
+- retrieval / RAG
 - memory
 - validation
 - tracing
 - permission checks
-- prompt-injection defenses
+- prompt-injection defense
+- multi-agent orchestration
 
-## Debugging
+Codex、Claude Code 这类 coding agent 都不是单纯 ReAct，而是把 ReAct 作为内部执行循环，
+外面叠加计划、权限、上下文压缩、工具路由、测试验证和错误恢复。
 
-Print outgoing Chat Completions or Responses payloads:
+## Debug
+
+打印发给模型的 payload：
 
 ```bash
 PRINT_PROMPTS=1 python -m repl
 ```
 
-fish:
+fish：
 
 ```fish
 set -x PRINT_PROMPTS 1
 python -m repl
 ```
 
-Disable:
+关闭：
 
 ```fish
 set -e PRINT_PROMPTS
 ```
 
-## Current Files
+## 当前文件结构
 
-- `llm.py`: Chat Completions HTTP wrapper.
-- `react.py`: default Chat Completions tool-call loop.
-- `repl.py`: default multi-turn REPL.
-- `tools.py`: local tools, Chat Completions tool schemas, Responses tool
-  schemas, and dispatcher.
-- `responses_llm.py`: Responses API HTTP wrapper.
-- `responses_agent.py`: Responses API tool-call loop.
-- `responses_repl.py`: Responses API REPL.
+- `llm.py`：Chat Completions HTTP wrapper。
+- `react.py`：默认 Chat Completions tool-call loop。
+- `repl.py`：默认多轮 REPL。
+- `tools.py`：本地工具、Chat Completions tool schema、Responses tool schema、dispatcher。
+- `responses_llm.py`：Responses API HTTP wrapper。
+- `responses_agent.py`：Responses API tool-call loop。
+- `responses_repl.py`：Responses API REPL。
+- `docs/chat_history_chat_tool_function_call.md`：Chat Completions tool calling 的完整
+  payload 日志示例。
 
-## Planned Features
+## 下一步计划
 
-- Add focused tests for tool schemas, dispatch, tool-call loops, tool errors,
-  multiple tool calls, and final-answer handling.
-- Return structured JSON tool results instead of plain strings.
-- Add run traces for every tool call and final answer.
-- Add practical tools such as `fetch_url`, `arxiv_search`, `current_time`,
-  `read_file`, and `write_note`.
-- Expand the Responses API path with streaming and trace comparison.
-- Add prompt-injection hardening for web/search outputs.
+- 用明确支持 Responses API 的 OpenAI 模型验证 `responses_repl.py`。
+- 增加 focused tests：tool schema、dispatch、tool-call loop、tool error、多 tool call、
+  final answer。
+- 把 tool result 改成结构化 JSON 字符串，而不是纯文本。
+- 增加 run trace，记录每一步 tool name、arguments、output preview、final answer。
+- 增加更实用的工具：`fetch_url`、`arxiv_search`、`current_time`、`read_file`、
+  `write_note`。
+- 给 web/search 输出增加 prompt-injection hardening。
+
