@@ -1,8 +1,10 @@
 # Local ReAct Agent
 
-A minimal, "hand-built" ReAct agent that talks to OpenAI's Chat Completions
-API. Four short Python files, no SDK abstractions over the loop — every
-tool call is requested through OpenAI function calling and dispatched manually.
+A compact teaching implementation of a ReAct-style agent. The default path
+uses OpenAI Chat Completions with function calling; a separate Responses API
+variant is included for comparison. There is no SDK agent framework here: the
+loop, tool dispatch, tool result handoff, and tracing are all implemented
+directly in Python.
 
 It also works with OpenAI-compatible gateways or local servers by overriding
 `OPENAI_BASE_URL`.
@@ -19,6 +21,10 @@ It also works with OpenAI-compatible gateways or local servers by overriding
 - **Function calling** — tools are exposed as JSON schemas. The model returns
   structured `tool_calls`; the Python loop executes them and sends the outputs
   back as `role: tool` messages.
+- **Structured tool results** — tool outputs are JSON strings with `ok: true`
+  or `ok: false`, so the model can distinguish successful results from errors.
+- **Run tracing** — every turn writes JSONL trace events for tool calls and
+  final answers, making the loop easy to inspect after a run.
 - **Prompt-as-history** — the LLM is stateless. The full `messages` list is
   re-sent every turn. That's literally the "context window" filling up.
 - **Inner vs outer loop** — the outer loop is multi-turn conversation
@@ -34,11 +40,12 @@ It also works with OpenAI-compatible gateways or local servers by overriding
 | File | Lines | What it does |
 |---|---|---|
 | `llm.py` | ~100 | One pure function: `chat(messages, tools)` → assistant message |
-| `tools.py` | ~130 | tool schemas, `calculate`, `web_search`, `dispatch` |
-| `react.py` | ~80 | `SYSTEM_PROMPT`, tool-call loop, `agent_turn` |
+| `tools.py` | ~175 | tool schemas, `calculate`, `web_search`, structured outputs, `dispatch` |
+| `trace.py` | ~40 | JSONL run trace writer |
+| `react.py` | ~110 | `SYSTEM_PROMPT`, Chat Completions tool-call loop, `agent_turn` |
 | `repl.py` | ~55 | Multi-turn REPL with `/clear`/`/history` commands |
 | `responses_llm.py` | ~70 | Optional OpenAI Responses API HTTP wrapper |
-| `responses_agent.py` | ~85 | Optional Responses API tool-call loop |
+| `responses_agent.py` | ~130 | Optional Responses API tool-call loop |
 | `responses_repl.py` | ~40 | Optional Responses API REPL |
 | `requirements.txt` | 2 | `httpx`, `ddgs` |
 
@@ -118,6 +125,8 @@ outputs were sent back together before the final answer.
 For a detailed breakdown of how Chat Completions assembles `messages` versus
 how Responses API uses `input` and `previous_response_id`, see
 [`docs/session-notes.md`](docs/session-notes.md#prompt-construction).
+For a short review quiz, see
+[`docs/react-agent-quiz.md`](docs/react-agent-quiz.md).
 
 ### REPL commands
 
@@ -167,19 +176,28 @@ user> /clear
 - **More steps** — raise `max_steps` in `agent_turn` (default 8).
 - **Less deterministic** — raise `temperature` in the `chat` call (default 0).
 
-## Planned Features
+## Teaching Coverage
+
+This demo now covers:
+
+- Chat Completions function calling.
+- Responses API comparison path.
+- Single tool call and multiple tool calls in one model response.
+- Tool error recovery through structured `ok: false` outputs.
+- Multi-turn local `messages` history.
+- Responses `previous_response_id` continuation.
+- Structured JSON tool result envelopes.
+- JSONL run traces.
+- Prompt/payload printing with `PRINT_PROMPTS=1`.
+- Provider notes for DeepSeek and Responses-compatible endpoints.
+
+## Future Extensions
 
 This project is intentionally small, but the next useful upgrades are:
 
 - **Focused tests** — cover `tool_specs()`, `dispatch()`, the tool-call loop,
   tool errors, multiple tool calls in one assistant message, and final-answer
   handling.
-- **Structured tool results** — tool outputs are now JSON strings such as
-  `{"ok": true, "tool": "calculate", "result": "300"}` or
-  `{"ok": false, "tool": "calculate", "error": {"type": "...", "message": "..."}}`.
-- **Run traces** — record each step as structured data: step number, tool name,
-  arguments, output, and final answer. Keep the REPL concise while preserving
-  a full debug log for teaching and inspection.
 - **More practical tools** — add examples such as `fetch_url(url)`,
   `arxiv_search(query)`, `current_time()`, `read_file(path)`, or
   `write_note(title, content)`.
