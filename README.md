@@ -100,8 +100,13 @@ OpenAI-compatible `/chat/completions` and function calling there, but not
 OpenAI's `/responses` endpoint. Use the default `python -m repl` path for
 DeepSeek unless DeepSeek adds `/responses` support.
 
-Next follow-up: validate and extend `responses_repl.py` with a model/provider
-that supports OpenAI's Responses API.
+Validation note: `responses_repl.py` has been manually verified with
+`doubao-seed-2-0-lite-260428` on a Responses-compatible endpoint. The run
+confirmed `previous_response_id` continuation, local function calls,
+`function_call_output` tool result handoff, and a follow-up Chinese summary
+that reused prior context. A multi-tool-call case was also verified: one model
+response returned two `calculate` calls, both were executed locally, and their
+outputs were sent back together before the final answer.
 
 For a detailed breakdown of how Chat Completions assembles `messages` versus
 how Responses API uses `input` and `previous_response_id`, see

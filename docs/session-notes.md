@@ -399,6 +399,51 @@ OpenAI Responses-capable model -> responses_repl.py
 另外，DeepSeek thinking 模式可能返回 `reasoning_content`。如果返回了这个字段，下一次
 请求需要把它保留在 assistant message history 中，否则可能报错。
 
+## Responses API 实测记录
+
+`responses_repl.py` 已经用 `doubao-seed-2-0-lite-260428` 在一个
+Responses-compatible endpoint 上手动跑通。
+
+实测覆盖了这些行为：
+
+- 第一轮普通问答没有 `previous_response_id`，直接返回最终回答。
+- 第二轮 `100 + 200` 带上上一轮最新 response id，模型返回 function call：
+  `calculate({"expression": "100 + 200"})`。
+- 本地执行 `calculate` 得到 `300`，再通过 `function_call_output` 回传：
+
+  ```json
+  {
+    "type": "function_call_output",
+    "call_id": "call_...",
+    "output": "300"
+  }
+  ```
+
+- 模型基于 tool output 返回最终答案。
+- 后续搜索 “latest agentic RAG survey in 6 months” 时，模型调用 `web_search`，
+  并基于搜索结果回答。
+- 再追问 “give the summary in chinese” 时，只发送新 input 和最新
+  `previous_response_id`，模型仍然能复用上一轮论文上下文，用中文总结。
+- 多 tool call 场景也已跑通。提示：
+  `Calculate 100 + 200 and 30 * 4. Use the calculate tool for both calculations before answering.`
+  模型在同一个 response 中返回 2 个 function calls：
+
+  ```text
+  calculate({"expression": "100 + 200"}) -> 300
+  calculate({"expression": "30 * 4"}) -> 120
+  ```
+
+  本地 loop 逐个执行两个 tool call，并把两个 `function_call_output` 一起作为下一轮
+  input 回传，随后模型返回最终答案。
+
+这说明该 provider/model 的 Responses-compatible 行为至少支持：
+
+- `/responses` 风格请求。
+- `previous_response_id` 上下文接续。
+- function call output item。
+- 多轮上下文延续。
+- 同一 response 中的多个 function calls。
+
 ## ReAct 基础概念
 
 ReAct = Reasoning + Acting。
@@ -481,7 +526,8 @@ set -e PRINT_PROMPTS
 
 ## 下一步计划
 
-- 用明确支持 Responses API 的 OpenAI 模型验证 `responses_repl.py`。
+- 继续用 Responses-compatible 模型验证更多边界场景，例如多 tool call、tool error、
+  长上下文和 streaming。
 - 增加 focused tests：tool schema、dispatch、tool-call loop、tool error、多 tool call、
   final answer。
 - 把 tool result 改成结构化 JSON 字符串，而不是纯文本。
@@ -489,4 +535,3 @@ set -e PRINT_PROMPTS
 - 增加更实用的工具：`fetch_url`、`arxiv_search`、`current_time`、`read_file`、
   `write_note`。
 - 给 web/search 输出增加 prompt-injection hardening。
-
