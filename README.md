@@ -74,6 +74,13 @@ pip install -r requirements.txt
 python -m repl
 ```
 
+Each run writes structured JSONL trace events under `traces/` by default. Set
+`TRACE_PATH` to choose a specific file:
+
+```bash
+TRACE_PATH=traces/demo.jsonl python -m repl
+```
+
 ## Responses API Variant
 
 The default `repl.py` uses Chat Completions because it works with OpenAI and
@@ -171,8 +178,8 @@ This project is intentionally small, but the next useful upgrades are:
   `{"ok": true, "tool": "calculate", "result": "300"}` or
   `{"ok": false, "tool": "calculate", "error": {"type": "...", "message": "..."}}`.
 - **Run traces** — record each step as structured data: step number, tool name,
-  arguments, output preview, and final answer. Keep the REPL concise while
-  preserving a full debug log for teaching and inspection.
+  arguments, output, and final answer. Keep the REPL concise while preserving
+  a full debug log for teaching and inspection.
 - **More practical tools** — add examples such as `fetch_url(url)`,
   `arxiv_search(query)`, `current_time()`, `read_file(path)`, or
   `write_note(title, content)`.

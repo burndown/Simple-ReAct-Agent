@@ -8,6 +8,7 @@ from datetime import date
 
 from responses_llm import create_response
 from tools import dispatch, responses_tool_specs, tool_output_error, tool_output_ok
+from trace import new_turn_id, write_event
 
 
 INSTRUCTIONS = f"""You are a helpful ReAct-style agent.
@@ -48,6 +49,16 @@ def agent_turn(user_input: str, previous_response_id: str | None = None, max_ste
     """
     next_input: str | list[dict] = user_input
     response_id = previous_response_id
+    turn_id = new_turn_id()
+    write_event(
+        {
+            "api": "responses",
+            "turn_id": turn_id,
+            "event": "turn_start",
+            "user": user_input,
+            "previous_response_id": previous_response_id,
+        }
+    )
 
     for step in range(1, max_steps + 1):
         response = create_response(
@@ -61,7 +72,18 @@ def agent_turn(user_input: str, previous_response_id: str | None = None, max_ste
         calls = _function_calls(response)
         if not calls:
             print(f"  [step {step}] final")
-            return _output_text(response), response_id
+            answer = _output_text(response)
+            write_event(
+                {
+                    "api": "responses",
+                    "turn_id": turn_id,
+                    "event": "final",
+                    "step": step,
+                    "response_id": response_id,
+                    "answer": answer,
+                }
+            )
+            return answer, response_id
 
         print(f"  [step {step}] function_calls: {len(calls)}")
         tool_outputs = []
@@ -77,6 +99,19 @@ def agent_turn(user_input: str, previous_response_id: str | None = None, max_ste
 
             preview = output[:120] + ("..." if len(output) > 120 else "")
             print(f"  [step {step}] result: {preview}")
+            write_event(
+                {
+                    "api": "responses",
+                    "turn_id": turn_id,
+                    "event": "tool_call",
+                    "step": step,
+                    "response_id": response_id,
+                    "call_id": call["call_id"],
+                    "tool": name,
+                    "arguments": arguments,
+                    "output": output,
+                }
+            )
 
             tool_outputs.append(
                 {
@@ -88,4 +123,6 @@ def agent_turn(user_input: str, previous_response_id: str | None = None, max_ste
 
         next_input = tool_outputs
 
-    return "(stopped: max_steps reached without final answer)", response_id
+    answer = "(stopped: max_steps reached without final answer)"
+    write_event({"api": "responses", "turn_id": turn_id, "event": "stopped", "response_id": response_id, "answer": answer})
+    return answer, response_id

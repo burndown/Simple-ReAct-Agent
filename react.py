@@ -17,6 +17,7 @@ from datetime import date
 
 from llm import chat
 from tools import dispatch, tool_output_error, tool_output_ok, tool_specs
+from trace import new_turn_id, write_event
 
 
 SYSTEM_PROMPT = f"""You are a helpful ReAct-style agent.
@@ -51,6 +52,10 @@ def agent_turn(messages: list[dict], max_steps: int = 8) -> str:
 
     Returns the final answer string for the REPL to print.
     """
+    turn_id = new_turn_id()
+    user_message = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
+    write_event({"api": "chat_completions", "turn_id": turn_id, "event": "turn_start", "user": user_message})
+
     for step in range(1, max_steps + 1):
         reply = chat(messages, tools=tool_specs())
         messages.append(_assistant_message(reply))
@@ -59,6 +64,15 @@ def agent_turn(messages: list[dict], max_steps: int = 8) -> str:
         if not tool_calls:
             answer = reply.get("content") or ""
             print(f"  [step {step}] final")
+            write_event(
+                {
+                    "api": "chat_completions",
+                    "turn_id": turn_id,
+                    "event": "final",
+                    "step": step,
+                    "answer": answer.strip(),
+                }
+            )
             return answer.strip()
 
         print(f"  [step {step}] tool_calls: {len(tool_calls)}")
@@ -74,6 +88,18 @@ def agent_turn(messages: list[dict], max_steps: int = 8) -> str:
 
             preview = output[:120] + ("..." if len(output) > 120 else "")
             print(f"  [step {step}] result: {preview}")
+            write_event(
+                {
+                    "api": "chat_completions",
+                    "turn_id": turn_id,
+                    "event": "tool_call",
+                    "step": step,
+                    "tool_call_id": tool_call["id"],
+                    "tool": name,
+                    "arguments": arguments,
+                    "output": output,
+                }
+            )
 
             messages.append(
                 {
@@ -83,4 +109,6 @@ def agent_turn(messages: list[dict], max_steps: int = 8) -> str:
                 }
             )
 
-    return "(stopped: max_steps reached without final answer)"
+    answer = "(stopped: max_steps reached without final answer)"
+    write_event({"api": "chat_completions", "turn_id": turn_id, "event": "stopped", "answer": answer})
+    return answer

@@ -554,6 +554,40 @@ python -m repl
 set -e PRINT_PROMPTS
 ```
 
+## Run Trace
+
+两条 agent loop 都会写结构化 JSONL trace：
+
+- Chat Completions：`react.py`
+- Responses API：`responses_agent.py`
+
+默认写入：
+
+```text
+traces/run-YYYYMMDD-HHMMSS.jsonl
+```
+
+也可以指定路径：
+
+```bash
+TRACE_PATH=traces/demo.jsonl python -m repl
+TRACE_PATH=traces/responses-demo.jsonl python -m responses_repl
+```
+
+每一行是一个事件，例如：
+
+```json
+{"event": "turn_start", "api": "responses", "user": "100 + 200"}
+{"event": "tool_call", "api": "responses", "tool": "calculate", "arguments": "{\"expression\":\"100 + 200\"}", "output": "{\"ok\": true, \"tool\": \"calculate\", \"result\": \"300\"}"}
+{"event": "final", "api": "responses", "answer": "300"}
+```
+
+这样 REPL 仍然保持简洁，同时教学时可以直接打开 trace 文件解释每一步：
+
+```text
+用户输入 -> 模型 tool call -> 本地 tool output -> 模型 final answer
+```
+
 ## 当前文件结构
 
 - `llm.py`：Chat Completions HTTP wrapper。
@@ -563,6 +597,7 @@ set -e PRINT_PROMPTS
 - `responses_llm.py`：Responses API HTTP wrapper。
 - `responses_agent.py`：Responses API tool-call loop。
 - `responses_repl.py`：Responses API REPL。
+- `trace.py`：JSONL run trace writer。
 - `docs/chat_history_chat_tool_function_call.md`：Chat Completions tool calling 的完整
   payload 日志示例。
 
@@ -572,7 +607,6 @@ set -e PRINT_PROMPTS
   长上下文和 streaming。
 - 增加 focused tests：tool schema、dispatch、tool-call loop、tool error、多 tool call、
   final answer。
-- 增加 run trace，记录每一步 tool name、arguments、output preview、final answer。
 - 增加更实用的工具：`fetch_url`、`arxiv_search`、`current_time`、`read_file`、
   `write_note`。
 - 给 web/search 输出增加 prompt-injection hardening。
